@@ -1,0 +1,51 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_REPO = 'sbarge123/css-jenkins-image'
+    }
+
+    stages {
+        stage('Pull Source Code') {
+            steps {
+                git 'https://github.com/sbarge123/css-jenkins.git'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} .'
+            }
+        }
+
+        stage('Push Docker Image') {
+            environment {
+                registryCredential = 'docker-creds'
+            }
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', registryCredential) {
+                        sh 'docker push ${DOCKERHUB_REPO}:${BUILD_NUMBER}'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            environment {
+                AWS_CREDENTIALS = 'aws-creds'
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDENTIALS]]) {
+                    script {
+                        sh """
+                    aws eks update-kubeconfig --name my-cluster --region us-east-2 --kubeconfig /tmp/config
+                    kubectl apply -f jenkins-pipeline.yml  --kubeconfig=/tmp/config
+                    kubectl set image deployment/css-deployment docker-jenkins=sbarge123/css-jenkins-image:${env.BUILD_NUMBER}  --kubeconfig=/tmp/config 
+                    """
+                    }
+                }
+            }
+        }
+    }
+}
